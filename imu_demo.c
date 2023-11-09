@@ -71,11 +71,11 @@ fix15 filtered_ax;
 fix15 filtered_ay;
 
 // Game variables
-#define PADDLE1_X = 40;
-#define PADDLE2_X = 590;
-#define PADDLE_LENGTH = 40;
-#define VGA_BOTTOM = 480;
-#define VGA_RIGHT = 640;
+#define PADDLE1_X 40
+#define PADDLE2_X 590
+#define PADDLE_LENGTH 50
+#define VGA_BOTTOM 480
+#define VGA_RIGHT 640
 
 fix15 ball_x = int2fix15(320);
 fix15 ball_y = int2fix15(240);
@@ -85,7 +85,7 @@ fix15 ball_vy = 0;
 fix15 paddle1_y = int2fix15(240);
 fix15 paddle1_vy = 0;
 fix15 paddle2_y = int2fix15(240);
-fix15 paddle2_vy = 0;
+fix15 paddle2_vy = float2fix15(0.5);
 
 // Interrupt service routine
 static PT_THREAD(protothread_paddle1(struct pt *pt))
@@ -93,8 +93,6 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
   PT_BEGIN(pt);
   while (true)
   {
-    // erase paddle
-    drawRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
 
     // Read the IMU
     // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
@@ -128,7 +126,18 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
     }
 
     // Changing y position of paddle 1
-    paddle1_vy = divfix(filtered_complementary - int2fix15(90), int2fix15(10));
+    paddle1_vy = 0-multfix15((filtered_complementary - int2fix15(90)),float2fix15(0.005));
+
+    if (paddle1_vy > float2fix15(0.5)){
+        paddle1_vy = float2fix15(0.5);
+    }
+    if (paddle1_vy < float2fix15(-0.5)){
+        paddle1_vy = float2fix15(-0.5);
+    }
+
+    // erase paddle
+    drawRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
+
     if (paddle1_y + paddle1_vy <= 0)
     {
       paddle1_y = 0;
@@ -159,15 +168,15 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
   while (true)
   {
     // erase paddle
-    drawRect(PADDLE2_X, fix2int15(paddl21_y), 10, PADDLE_LENGTH, BLACK);
+    drawRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
     // Changing y position of paddle 2
     if (paddle2_y <= 0)
     {
-      paddle2_vy = int2fix15(5);
+      paddle2_vy = float2fix15(0.005);
     }
     if (paddle2_y + int2fix15(PADDLE_LENGTH) >= int2fix15(VGA_BOTTOM))
     {
-      paddle2_vy = int2fix15(-5);
+      paddle2_vy = float2fix15(-0.005);
     }
     paddle2_y += paddle2_vy;
 
@@ -207,7 +216,7 @@ static PT_THREAD(protothread_serial(struct pt *pt))
 
       // convert input string to number
       sscanf(pt_serial_in_buffer, "%d", &int_in);
-      kp = int2fix15(test_in);
+
     }
   }
   PT_END(pt);
