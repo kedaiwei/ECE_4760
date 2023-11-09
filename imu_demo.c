@@ -76,11 +76,13 @@ fix15 filtered_ay;
 #define PADDLE_LENGTH 50
 #define VGA_BOTTOM 480
 #define VGA_RIGHT 640
+#define BALL_RADIUS 5
 
 fix15 ball_x = int2fix15(320);
 fix15 ball_y = int2fix15(240);
-fix15 ball_vx = 0;
-fix15 ball_vy = 0;
+float ball_angle = rand() % (PI * 2 / 3) + PI * 2 / 3;
+fix15 ball_vx = float2int15(0.5 * sin(ball_angle));
+fix15 ball_vy = float2int15(0.5 * cos(ball_angle));
 
 fix15 paddle1_y = int2fix15(240);
 fix15 paddle1_vy = 0;
@@ -126,17 +128,19 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
     }
 
     // Changing y position of paddle 1
-    paddle1_vy = 0-multfix15((filtered_complementary - int2fix15(90)),float2fix15(0.005));
+    paddle1_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
 
-    if (paddle1_vy > float2fix15(0.5)){
-        paddle1_vy = float2fix15(0.5);
+    if (paddle1_vy > float2fix15(0.5))
+    {
+      paddle1_vy = float2fix15(0.5);
     }
-    if (paddle1_vy < float2fix15(-0.5)){
-        paddle1_vy = float2fix15(-0.5);
+    if (paddle1_vy < float2fix15(-0.5))
+    {
+      paddle1_vy = float2fix15(-0.5);
     }
 
     // erase paddle
-    drawRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
+    fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
 
     if (paddle1_y + paddle1_vy <= 0)
     {
@@ -152,12 +156,10 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
     }
 
     // draw paddle
-    drawRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
+    fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
   }
   PT_END(pt);
 }
-
-char str[10];
 
 // Thread that draws to paddle2
 static PT_THREAD(protothread_paddle2(struct pt *pt))
@@ -168,7 +170,7 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
   while (true)
   {
     // erase paddle
-    drawRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
+    fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
     // Changing y position of paddle 2
     if (paddle2_y <= 0)
     {
@@ -181,7 +183,58 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
     paddle2_y += paddle2_vy;
 
     // draw paddle
-    drawRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+    fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+  }
+
+  // Indicate end of thread
+  PT_END(pt);
+}
+
+// Thread that draws to the ball
+static PT_THREAD(protothread_ball(struct pt *pt))
+{
+  // Indicate start of thread
+  PT_BEGIN(pt);
+
+  while (true)
+  {
+    // Changing position of ball
+    if (ball_x >= int2fix15(VGA_RIGHT) || ball_x <= 0)
+    {
+      // erase ball
+      fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+      ball_x = int2fix15(VGA_RIGHT / 2);
+      ball_y = int2fix15(VGA_BOTTOM / 2);
+      ball_vx = 0 - ball_vx;
+    }
+    if (ball_y >= int2fix15(VGA_BOTTOM) || ball_y <= 0)
+    {
+      ball_vy = 0 - ball_vy;
+    }
+
+    if (ball_x > int2fix15(PADDLE1_X + 12) && ball_x < in2fix15(PADDLE1_X + 18))
+    {
+      if (ball_y > paddle1_y && ball_y < paddle1_y + int2fix15(PADDLE_LENGTH))
+      {
+        ball_vx = 0 - ball_vx;
+      }
+    }
+
+    if (ball_x < int2fix15(PADDLE2_X + 2) && ball_x > in2fix15(PADDLE2_X - 8))
+    {
+      if (ball_y > paddle2_y && ball_y < paddle2_y + int2fix15(PADDLE_LENGTH))
+      {
+        ball_vx = 0 - ball_vx;
+      }
+    }
+    // erase ball
+    fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+
+    ball_x += ball_vx;
+    ball_y += ball_vy;
+
+    // draw ball
+    fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
   }
 
   // Indicate end of thread
@@ -216,7 +269,6 @@ static PT_THREAD(protothread_serial(struct pt *pt))
 
       // convert input string to number
       sscanf(pt_serial_in_buffer, "%d", &int_in);
-
     }
   }
   PT_END(pt);
@@ -261,5 +313,6 @@ int main()
   // start core 0
   pt_add_thread(protothread_serial);
   pt_add_thread(protothread_paddle1);
+  pt_add_thread(protothread_ball);
   pt_schedule_start;
 }
