@@ -289,6 +289,19 @@ int main()
   // Initialize VGA
   initVGA();
 
+  const uint TX_PIN = 0; // Choose the GPIO pin for TX
+  uart_init(uart0, 115200);
+  gpio_set_function(TX_PIN, GPIO_FUNC_UART);
+  uart_set_hw_flow(uart0, false, false);
+  uart_set_format(uart0, 8, 1, UART_PARITY_NONE);
+
+  while (1)
+  {
+    printf("Sending data...\n");
+    uart_puts(uart0, "Hello, Pico B!\n");
+    sleep_ms(1000);
+  }
+
   ////////////////////////////////////////////////////////////////////////
   ///////////////////////// I2C CONFIGURATION ////////////////////////////
 
