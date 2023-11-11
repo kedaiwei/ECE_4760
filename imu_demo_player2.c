@@ -73,7 +73,7 @@ fix15 filtered_ay;
 // Game variables
 #define PADDLE1_X 40
 #define PADDLE2_X 590
-#define PADDLE_LENGTH 50
+#define PADDLE_LENGTH 60
 #define VGA_BOTTOM 480
 #define VGA_RIGHT 640
 #define BALL_RADIUS 5
@@ -82,8 +82,12 @@ fix15 ball_x = int2fix15(320);
 fix15 ball_y = int2fix15(240);
 
 fix15 paddle1_y = int2fix15(240);
+
 fix15 paddle2_y = int2fix15(240);
 fix15 paddle2_vy = float2fix15(0.5);
+int player1;
+int player2;
+bool play = true;
 
 // Interrupt service routine
 static PT_THREAD(protothread_paddle2(struct pt *pt))
@@ -91,68 +95,72 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
   PT_BEGIN(pt);
   while (true)
   {
-
-    // Read the IMU
-    // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
-    // If you want these values in floating point, call fix2float15() on
-    // the raw measurements.
-    mpu6050_read_raw(acceleration, gyro);
-
-    // Accelerometer angle (degrees - 15.16 fixed point)
-    // Only ONE of the two lines below will be used, depending whether or not a small angle approximation is appropriate
-    filtered_ax = filtered_ax + ((acceleration[1] - filtered_ax) >> 4);
-    filtered_ay = filtered_ay + ((acceleration[2] - filtered_ay) >> 4);
-
-    // NO SMALL ANGLE APPROXIMATION
-    accel_angle = multfix15(float2fix15(atan2(fix2float15(-filtered_ay), fix2float15(filtered_ax)) + PI), oneeightyoverpi);
-
-    // Gyro angle delta (measurement times timestep) (15.16 fixed point)
-    gyro_angle_delta = multfix15(gyro[0], zeropt001);
-
-    // Complementary angle (degrees - 15.16 fixed point)
-    complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
-    filtered_complementary = filtered_complementary + ((complementary_angle - filtered_complementary) >> 4);
-
-    // When the arm swings past 0 degrees, set it to zero
-    if (filtered_complementary > int2fix15(180))
+    // wait for 0.1 sec
+    PT_YIELD_usec(10);
+    if (play)
     {
-      filtered_complementary = int2fix15(180);
-    }
-    if (filtered_complementary < 0)
-    {
-      filtered_complementary = 0;
-    }
+      // Read the IMU
+      // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
+      // If you want these values in floating point, call fix2float15() on
+      // the raw measurements.
+      mpu6050_read_raw(acceleration, gyro);
 
-    // Changing y position of paddle 1
-    paddle2_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
+      // Accelerometer angle (degrees - 15.16 fixed point)
+      // Only ONE of the two lines below will be used, depending whether or not a small angle approximation is appropriate
+      filtered_ax = filtered_ax + ((acceleration[1] - filtered_ax) >> 4);
+      filtered_ay = filtered_ay + ((acceleration[2] - filtered_ay) >> 4);
 
-    if (paddle2_vy > float2fix15(0.5))
-    {
-      paddle2_vy = float2fix15(0.5);
-    }
-    if (paddle2_vy < float2fix15(-0.5))
-    {
-      paddle2_vy = float2fix15(-0.5);
-    }
+      // NO SMALL ANGLE APPROXIMATION
+      accel_angle = multfix15(float2fix15(atan2(fix2float15(-filtered_ay), fix2float15(filtered_ax)) + PI), oneeightyoverpi);
 
-    // erase paddle
-    fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
+      // Gyro angle delta (measurement times timestep) (15.16 fixed point)
+      gyro_angle_delta = multfix15(gyro[0], zeropt001);
 
-    if (paddle2_y + paddle2_vy <= 0)
-    {
-      paddle2_y = 0;
-    }
-    else if (paddle2_y + paddle2_vy + int2fix15(PADDLE_LENGTH) >= int2fix15(VGA_BOTTOM))
-    {
-      paddle2_y = int2fix15(VGA_BOTTOM - PADDLE_LENGTH);
-    }
-    else
-    {
-      paddle2_y += paddle2_vy;
-    }
+      // Complementary angle (degrees - 15.16 fixed point)
+      complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
+      filtered_complementary = filtered_complementary + ((complementary_angle - filtered_complementary) >> 4);
 
-    // draw paddle
-    fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+      // When the arm swings past 0 degrees, set it to zero
+      if (filtered_complementary > int2fix15(180))
+      {
+        filtered_complementary = int2fix15(180);
+      }
+      if (filtered_complementary < 0)
+      {
+        filtered_complementary = 0;
+      }
+
+      // Changing y position of paddle 1
+      paddle2_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
+
+      if (paddle2_vy > float2fix15(0.9))
+      {
+        paddle2_vy = float2fix15(0.9);
+      }
+      if (paddle2_vy < float2fix15(-0.9))
+      {
+        paddle2_vy = float2fix15(-0.9);
+      }
+
+      // erase paddle
+      fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
+
+      if (paddle2_y + paddle2_vy <= 0)
+      {
+        paddle2_y = 0;
+      }
+      else if (paddle2_y + paddle2_vy + int2fix15(PADDLE_LENGTH) >= int2fix15(VGA_BOTTOM))
+      {
+        paddle2_y = int2fix15(VGA_BOTTOM - PADDLE_LENGTH);
+      }
+      else
+      {
+        paddle2_y += paddle2_vy;
+      }
+
+      // draw paddle
+      fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+    }
   }
   PT_END(pt);
 }
@@ -165,11 +173,15 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
 
   while (true)
   {
-    // erase paddle
-    fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
+    PT_YIELD_usec(10);
+    if (play)
+    {
+      // erase paddle
+      fillRect(PADDLE1_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
 
-    // draw paddle
-    fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
+      // draw paddle
+      fillRect(PADDLE1_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+    }
   }
 
   // Indicate end of thread
@@ -177,21 +189,67 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
 }
 
 // Thread that draws to the ball
-static PT_THREAD(protothread_ball(struct pt *pt))
+static PT_THREAD(protothread_ball1(struct pt *pt))
 {
   // Indicate start of thread
   PT_BEGIN(pt);
 
-  while (true)
+  while (1)
   {
-    // erase ball
-    fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+    // wait for 0.1 sec
+    PT_YIELD_usec(10);
+    if (play)
+    {
+      // erase ball
+      fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
 
-    // draw ball
-    fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
+      // draw ball
+      fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
+    }
   }
 
   // Indicate end of thread
+  PT_END(pt);
+}
+
+char str[10];
+static PT_THREAD(protothread_score(struct pt *pt))
+{
+  PT_BEGIN(pt);
+  while (1)
+  {
+    setCursor(100, 15);
+    setTextSize(2);
+    sprintf(str, "Player 1 = %d  ", player1);
+    setTextColor2(WHITE, BLACK);
+    writeString(str);
+
+    setCursor(400, 15);
+    sprintf(str, "Player 2 = %d  ", player2);
+    setTextColor2(WHITE, BLACK);
+    writeString(str);
+
+    if (player1 == 10)
+    {
+      setCursor(200, 240);
+      sprintf(str, "Player 1 wins!");
+      setTextColor2(WHITE, BLACK);
+      writeString(str);
+
+      play = false;
+    }
+
+    if (player2 == 10)
+    {
+      setCursor(200, 240);
+      sprintf(str, "Player 2 wins!");
+      setTextColor2(WHITE, BLACK);
+      writeString(str);
+      play = false;
+    }
+
+    PT_YIELD_usec(100000);
+  }
   PT_END(pt);
 }
 
