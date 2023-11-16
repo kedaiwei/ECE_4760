@@ -332,11 +332,10 @@ void compute_sample(void)
     data_buffer[0] = valid_game;
     data_buffer[1] = (short)(fix2int15(ball_x));
     data_buffer[2] = (short)(fix2int15(ball_y));
-    data_buffer[3] = (short)(fix2int15(ball_x));
-    data_buffer[4] = (short)(fix2int15(ball_y));
-    data_buffer[5] = (short)(player1);
-    data_buffer[6] = (short)(player2);
-    data_buffer[7] = (short)(play_game);
+    data_buffer[3] = (short)(fix2int15(paddle1_y));
+    data_buffer[4] = (short)(player1);
+    data_buffer[5] = (short)(player2);
+    data_buffer[6] = (short)(play_game);
 
     printf("%hd", count_isr);
     // if full, signal send and copy buffer
@@ -349,15 +348,17 @@ void compute_sample(void)
     }
 
     printf("receving");
-    short currentShort = *((short *)recv_data);
+    short currentShort = ((short *)(recv_data))[7];
+    paddle2_y = int2fix15((int)(currentShort));
     printf("%hd", currentShort);
+
+    paddle2_y = int2fix15((int)(currentShort));
   }
 
   else if ((mode == echo) && play)
   {
-
     printf("sending");
-    data_buffer[0] = count_isr + 200;
+    data_buffer[7] = (short)(fix2int15(paddle2_y));
     printf("%hd", (count_isr + 200));
     // if full, signal send and copy buffer
     if (true)
@@ -371,6 +372,14 @@ void compute_sample(void)
     printf("receving");
     short currentShort = ((short *)(recv_data))[5];
     printf("%hd", currentShort);
+
+    short valid_game = ((short *)(recv_data))[0];
+    ball_x = int2fix15(((int *)(recv_data))[1]);
+    ball_y = int2fix15(((int *)(recv_data))[2]);
+    paddle1_y = int2fix15(((int *)(recv_data))[3]);
+    player1 = ((int *)(recv_data))[4];
+    player2 = ((int *)(recv_data))[5];
+    play_game = (bool)(((short *)(recv_data))[6]);
   }
 } // isr sample routine
 
@@ -800,6 +809,7 @@ typedef struct TCP_SERVER_T_
   ip_addr_t gw;
   async_context_t *context;
 } TCP_SERVER_T;
+
 static PT_THREAD(protothread_paddle1(struct pt *pt))
 {
   PT_BEGIN(pt);
@@ -809,67 +819,74 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
     PT_YIELD_usec(10);
     if (play_game)
     {
-      // Read the IMU
-      // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
-      // If you want these values in floating point, call fix2float15() on
-      // the raw measurements.
-      mpu6050_read_raw(acceleration, gyro);
-
-      // Accelerometer angle (degrees - 15.16 fixed point)
-      // Only ONE of the two lines below will be used, depending whether or not a small angle approximation is appropriate
-      filtered_ax = filtered_ax + ((acceleration[1] - filtered_ax) >> 4);
-      filtered_ay = filtered_ay + ((acceleration[2] - filtered_ay) >> 4);
-
-      // NO SMALL ANGLE APPROXIMATION
-      accel_angle = multfix15(float2fix15(atan2(fix2float15(-filtered_ay), fix2float15(filtered_ax)) + PI), oneeightyoverpi);
-
-      // Gyro angle delta (measurement times timestep) (15.16 fixed point)
-      gyro_angle_delta = multfix15(gyro[0], zeropt001);
-
-      // Complementary angle (degrees - 15.16 fixed point)
-      complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
-      filtered_complementary = filtered_complementary + ((complementary_angle - filtered_complementary) >> 4);
-
-      // When the arm swings past 0 degrees, set it to zero
-      if (filtered_complementary > int2fix15(180))
+      if (mode == send)
       {
-        filtered_complementary = int2fix15(180);
-      }
-      if (filtered_complementary < 0)
-      {
-        filtered_complementary = 0;
-      }
+        // Read the IMU
+        mpu6050_read_raw(acceleration, gyro);
 
-      // Changing y position of paddle 1
-      paddle1_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
+        // Accelerometer angle (degrees - 15.16 fixed point)
+        filtered_ax = filtered_ax + ((acceleration[1] - filtered_ax) >> 4);
+        filtered_ay = filtered_ay + ((acceleration[2] - filtered_ay) >> 4);
 
-      if (paddle1_vy > float2fix15(0.9))
-      {
-        paddle1_vy = float2fix15(0.9);
-      }
-      if (paddle1_vy < float2fix15(-0.9))
-      {
-        paddle1_vy = float2fix15(-0.9);
-      }
+        // NO SMALL ANGLE APPROXIMATION
+        accel_angle = multfix15(float2fix15(atan2(fix2float15(-filtered_ay), fix2float15(filtered_ax)) + PI), oneeightyoverpi);
 
-      // erase paddle
-      fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
+        // Gyro angle delta (measurement times timestep) (15.16 fixed point)
+        gyro_angle_delta = multfix15(gyro[0], zeropt001);
 
-      if (paddle1_y + paddle1_vy <= 0)
-      {
-        paddle1_y = 0;
-      }
-      else if (paddle1_y + paddle1_vy + int2fix15(PADDLE_LENGTH) >= int2fix15(VGA_BOTTOM))
-      {
-        paddle1_y = int2fix15(VGA_BOTTOM - PADDLE_LENGTH);
+        // Complementary angle (degrees - 15.16 fixed point)
+        complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
+        filtered_complementary = filtered_complementary + ((complementary_angle - filtered_complementary) >> 4);
+
+        // When the arm swings past 0 degrees, set it to zero
+        if (filtered_complementary > int2fix15(180))
+        {
+          filtered_complementary = int2fix15(180);
+        }
+        if (filtered_complementary < 0)
+        {
+          filtered_complementary = 0;
+        }
+
+        // Changing y position of paddle 1
+        paddle1_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
+
+        if (paddle1_vy > float2fix15(0.9))
+        {
+          paddle1_vy = float2fix15(0.9);
+        }
+        if (paddle1_vy < float2fix15(-0.9))
+        {
+          paddle1_vy = float2fix15(-0.9);
+        }
+
+        // erase paddle
+        fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
+
+        if (paddle1_y + paddle1_vy <= 0)
+        {
+          paddle1_y = 0;
+        }
+        else if (paddle1_y + paddle1_vy + int2fix15(PADDLE_LENGTH) >= int2fix15(VGA_BOTTOM))
+        {
+          paddle1_y = int2fix15(VGA_BOTTOM - PADDLE_LENGTH);
+        }
+        else
+        {
+          paddle1_y += paddle1_vy;
+        }
+
+        // draw paddle
+        fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
       }
       else
       {
-        paddle1_y += paddle1_vy;
-      }
+        // erase paddle
+        fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
 
-      // draw paddle
-      fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
+        // draw paddle
+        fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
+      }
     }
   }
   PT_END(pt);
@@ -886,21 +903,74 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
     PT_YIELD_usec(10);
     if (play_game)
     {
-      // erase paddle
-      fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
-      // Changing y position of paddle 2
-      if (paddle2_y <= 0)
+      if (mode == echo)
       {
-        paddle2_vy = float2fix15(0.09);
-      }
-      if (paddle2_y + int2fix15(PADDLE_LENGTH) >= int2fix15(VGA_BOTTOM))
-      {
-        paddle2_vy = float2fix15(-0.09);
-      }
-      paddle2_y += paddle2_vy;
+        // Read the IMU
+        mpu6050_read_raw(acceleration, gyro);
 
-      // draw paddle
-      fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+        // Accelerometer angle (degrees - 15.16 fixed point)
+        filtered_ax = filtered_ax + ((acceleration[1] - filtered_ax) >> 4);
+        filtered_ay = filtered_ay + ((acceleration[2] - filtered_ay) >> 4);
+
+        // NO SMALL ANGLE APPROXIMATION
+        accel_angle = multfix15(float2fix15(atan2(fix2float15(-filtered_ay), fix2float15(filtered_ax)) + PI), oneeightyoverpi);
+
+        // Gyro angle delta (measurement times timestep) (15.16 fixed point)
+        gyro_angle_delta = multfix15(gyro[0], zeropt001);
+
+        // Complementary angle (degrees - 15.16 fixed point)
+        complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
+        filtered_complementary = filtered_complementary + ((complementary_angle - filtered_complementary) >> 4);
+
+        // When the arm swings past 0 degrees, set it to zero
+        if (filtered_complementary > int2fix15(180))
+        {
+          filtered_complementary = int2fix15(180);
+        }
+        if (filtered_complementary < 0)
+        {
+          filtered_complementary = 0;
+        }
+
+        // Changing y position of paddle 1
+        paddle2_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
+
+        if (paddle2_vy > float2fix15(0.9))
+        {
+          paddle2_vy = float2fix15(0.9);
+        }
+        if (paddle2_vy < float2fix15(-0.9))
+        {
+          paddle2_vy = float2fix15(-0.9);
+        }
+
+        // erase paddle
+        fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
+
+        if (paddle2_y + paddle2_vy <= 0)
+        {
+          paddle2_y = 0;
+        }
+        else if (paddle2_y + paddle2_vy + int2fix15(PADDLE_LENGTH) >= int2fix15(VGA_BOTTOM))
+        {
+          paddle2_y = int2fix15(VGA_BOTTOM - PADDLE_LENGTH);
+        }
+        else
+        {
+          paddle2_y += paddle2_vy;
+        }
+
+        // draw paddle
+        fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+      }
+      else
+      {
+        // erase paddle
+        fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
+
+        // draw paddle
+        fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+      }
     }
   }
 
@@ -920,54 +990,65 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
     PT_YIELD_usec(10);
     if (play_game)
     {
-      // Changing position of ball
-      if (ball_x >= int2fix15(VGA_RIGHT))
+      if (mode == send)
+      {
+        // Changing position of ball
+        if (ball_x >= int2fix15(VGA_RIGHT))
+        {
+          // erase ball
+          fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+          ball_x = int2fix15(VGA_RIGHT / 2);
+          ball_y = int2fix15(VGA_BOTTOM / 2);
+          ball_vx = 0 - ball_vx;
+          player1 += 1;
+        }
+        if (ball_x <= 0)
+        {
+          // erase ball
+          fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+          ball_x = int2fix15(VGA_RIGHT / 2);
+          ball_y = int2fix15(VGA_BOTTOM / 2);
+          ball_vx = 0 - ball_vx;
+          player2 += 1;
+        }
+
+        if (ball_y >= int2fix15(VGA_BOTTOM) || ball_y <= 0)
+        {
+          ball_vy = 0 - ball_vy;
+        }
+
+        if (ball_x > int2fix15(PADDLE1_X + 12) && ball_x < int2fix15(PADDLE1_X + 18))
+        {
+          if (ball_y > paddle1_y && ball_y < paddle1_y + int2fix15(PADDLE_LENGTH))
+          {
+            ball_vx = float2fix15(0.1);
+          }
+        }
+
+        if (ball_x < int2fix15(PADDLE2_X + 2) && ball_x > int2fix15(PADDLE2_X - 8))
+        {
+          if (ball_y > paddle2_y && ball_y < paddle2_y + int2fix15(PADDLE_LENGTH))
+          {
+            ball_vx = float2fix15(-0.1);
+          }
+        }
+        // erase ball
+        fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+
+        ball_x += ball_vx;
+        ball_y += ball_vy;
+
+        // draw ball
+        fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
+      }
+      else
       {
         // erase ball
         fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
-        ball_x = int2fix15(VGA_RIGHT / 2);
-        ball_y = int2fix15(VGA_BOTTOM / 2);
-        ball_vx = 0 - ball_vx;
-        player1 += 1;
-      }
-      if (ball_x <= 0)
-      {
-        // erase ball
-        fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
-        ball_x = int2fix15(VGA_RIGHT / 2);
-        ball_y = int2fix15(VGA_BOTTOM / 2);
-        ball_vx = 0 - ball_vx;
-        player2 += 1;
-      }
 
-      if (ball_y >= int2fix15(VGA_BOTTOM) || ball_y <= 0)
-      {
-        ball_vy = 0 - ball_vy;
+        // draw ball
+        fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
       }
-
-      if (ball_x > int2fix15(PADDLE1_X + 12) && ball_x < int2fix15(PADDLE1_X + 18))
-      {
-        if (ball_y > paddle1_y && ball_y < paddle1_y + int2fix15(PADDLE_LENGTH))
-        {
-          ball_vx = float2fix15(0.1);
-        }
-      }
-
-      if (ball_x < int2fix15(PADDLE2_X + 2) && ball_x > int2fix15(PADDLE2_X - 8))
-      {
-        if (ball_y > paddle2_y && ball_y < paddle2_y + int2fix15(PADDLE_LENGTH))
-        {
-          ball_vx = float2fix15(-0.1);
-        }
-      }
-      // erase ball
-      fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
-
-      ball_x += ball_vx;
-      ball_y += ball_vy;
-
-      // draw ball
-      fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
     }
   }
 
