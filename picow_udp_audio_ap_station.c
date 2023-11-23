@@ -139,6 +139,9 @@ fix15 ball_y = int2fix15(240);
 fix15 ball_vx = float2fix15(0.1);
 fix15 ball_vy = float2fix15(0.3);
 
+fix15 old_ball_x = int2fix15(320);
+fix15 old_ball_y = int2fix15(240);
+
 fix15 paddle1_y = int2fix15(240);
 fix15 paddle1_vy = 0;
 fix15 paddle2_y = int2fix15(240);
@@ -206,7 +209,7 @@ int play = false;
 int paired = false;
 // data to send over WIFI
 #define max_data_size 512
-int data_size = 500; // 512
+int data_size = 20; // 512
 // double buffer the sent data to avoid skips
 short data_buffer[max_data_size];
 // buffer_number is 0 or 1
@@ -256,7 +259,7 @@ float Fout;
 // 1 Mbit/sec
 // 50000 works 800 Kbits/sec
 #define Fs 40000 // per second
-volatile int alarm_period = 1000000;
+volatile int alarm_period = 10000;
 volatile unsigned int main_inc = 400 * 4294967296 / Fs; // 2^32
 volatile unsigned int main_accum;
 // send uses this to save in buffer, recv uses it for DAC
@@ -337,9 +340,9 @@ void compute_sample(void)
     data_buffer[5] = (short)(player2);
     data_buffer[6] = (short)(play_game);
 
-    printf("%hd", count_isr);
+    printf("%hd", data_buffer[3]);
     // if full, signal send and copy buffer
-    if (true)
+    if (count_isr % 4 == 0)
     {
       memcpy(send_data, data_buffer, send_data_size);
       tx_buffer_index = 0;
@@ -347,21 +350,20 @@ void compute_sample(void)
       PT_SEM_SIGNAL(pt, &new_udp_send_s);
     }
 
-    printf("receving");
-    short currentShort = ((short *)(recv_data))[7];
+    //printf("receving");
+    short currentShort = ((short *)(recv_data))[0];
     paddle2_y = int2fix15((int)(currentShort));
-    printf("%hd", currentShort);
-
+    //printf("%hd", currentShort);
     paddle2_y = int2fix15((int)(currentShort));
   }
 
   else if ((mode == echo) && play)
   {
-    printf("sending");
-    data_buffer[7] = (short)(fix2int15(paddle2_y));
-    printf("%hd", (count_isr + 200));
+    //printf("sending");
+    data_buffer[0] = (short)(fix2int15(paddle2_y));
+    //printf("%hd", data_buffer[0]);
     // if full, signal send and copy buffer
-    if (true)
+    if (count_isr % 4 == 0)
     {
       memcpy(send_data, data_buffer, send_data_size);
       tx_buffer_index = 0;
@@ -374,11 +376,11 @@ void compute_sample(void)
     printf("%hd", currentShort);
 
     short valid_game = ((short *)(recv_data))[0];
-    ball_x = int2fix15(((int *)(recv_data))[1]);
-    ball_y = int2fix15(((int *)(recv_data))[2]);
-    paddle1_y = int2fix15(((int *)(recv_data))[3]);
-    player1 = ((int *)(recv_data))[4];
-    player2 = ((int *)(recv_data))[5];
+    ball_x = int2fix15((int)(((short *)(recv_data))[1]));
+    ball_y = int2fix15((int)(((short *)(recv_data))[2]));
+    paddle1_y = int2fix15((int)(((short *)(recv_data))[3]));
+    player1 = (int)(((short *)(recv_data))[4]);
+    player2 = (int)(((short *)(recv_data))[5]);
     play_game = (bool)(((short *)(recv_data))[6]);
   }
 } // isr sample routine
@@ -882,7 +884,8 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
       else
       {
         // erase paddle
-        fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE1_X, fix2int15(paddle1_y)-PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE1_X, fix2int15(paddle1_y)+PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
 
         // draw paddle
         fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
@@ -966,7 +969,8 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
       else
       {
         // erase paddle
-        fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE2_X, fix2int15(paddle2_y)-PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE2_X, fix2int15(paddle2_y)+PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
 
         // draw paddle
         fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
@@ -983,6 +987,7 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
 {
   // Indicate start of thread
   PT_BEGIN(pt);
+
 
   while (1)
   {
@@ -1043,12 +1048,20 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
       }
       else
       {
-        // erase ball
-        fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
 
-        // draw ball
-        fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
+
+        
+
+        if(old_ball_x != ball_x || old_ball_y != ball_y){
+          fillCircle(fix2int15(old_ball_x), fix2int15(old_ball_y), BALL_RADIUS, BLACK);
+          //fillCircle(fix2int15(old_ball_x) + 20, fix2int15(old_ball_y) + 20, BALL_RADIUS, RED);
+          old_ball_y = ball_y;
+          old_ball_x = ball_x;
+        }
+        fillCircle(fix2int15(old_ball_x), fix2int15(old_ball_y), BALL_RADIUS, WHITE);
+
       }
+      
     }
   }
 
@@ -1073,7 +1086,7 @@ static PT_THREAD(protothread_score(struct pt *pt))
     setTextColor2(WHITE, BLACK);
     writeString(str);
 
-    if (player1 == 10)
+    if (player1 == 100)
     {
       setCursor(200, 240);
       sprintf(str, "Player 1 wins!");
@@ -1083,7 +1096,7 @@ static PT_THREAD(protothread_score(struct pt *pt))
       play_game = false;
     }
 
-    if (player2 == 10)
+    if (player2 == 100)
     {
       setCursor(200, 240);
       sprintf(str, "Player 2 wins!");
