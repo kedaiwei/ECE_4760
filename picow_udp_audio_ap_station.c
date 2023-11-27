@@ -236,13 +236,41 @@ uint64_t time1;
 #define DAC_config_chan_A 0b0011000000000000
 // B-channel, 1x, active
 #define DAC_config_chan_B 0b1011000000000000
-uint16_t DAC_data;
+
+//Direct Digital Synthesis (DDS) parameters
+#define two32 4294967296.0  // 2^32 (a constant)
+#define Fs 40000            // sample rate
+// the DDS units - core 0
+// Phase accumulator and phase increment. Increment sets output frequency.
+volatile unsigned int phase_accum_main_0;
+volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
+// Amplitude modulation parameters and variables
+fix15 max_amplitude = int2fix15(1) ;    // maximum amplitude
+fix15 attack_inc ;                      // rate at which sound ramps up
+fix15 decay_inc ;                       // rate at which sound ramps down
+fix15 current_amplitude_0 = 0 ;         // current amplitude (modified in ISR)
+fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
+// Two variables to store core number
+volatile int corenum_0  ;
+
+// Global counter for spinlock experimenting
+volatile int global_counter = 0 ;
+int DAC_output_0 ;
+uint16_t DAC_data_0 ; // output value
+#define ATTACK_TIME             200
+#define DECAY_TIME              200
+#define SUSTAIN_TIME            10000
+#define BEEP_DURATION           10400
+#define BEEP_REPEAT_INTERVAL    40000
+// State machine variables
+volatile unsigned int STATE_0 = 0 ;
+volatile unsigned int count_0 = 0 ;
+// DDS sine table (populated in main())
+#define sine_table_size 256
+fix15 sin_table[sine_table_size] ;
 
 // ================================================
 // DDS variables
-#define sin_table_len 256
-short sine_table[sin_table_len];
-short sine_table_out;
 // the desired frequency output
 float Fout;
 // 1/Fs in microseconds for ISR
@@ -323,7 +351,6 @@ void compute_sample(void)
   count_isr++;
   if ((mode == send) && play)
   {
-    printf("sending");
     short valid_game = 1;
     // short ball_xx = (short)(fix2int15(ball_x));
     // short ball_yy = (short)(fix2int15(ball_y));
@@ -339,8 +366,6 @@ void compute_sample(void)
     data_buffer[4] = (short)(player1);
     data_buffer[5] = (short)(player2);
     data_buffer[6] = (short)(play_game);
-
-    printf("%hd", data_buffer[3]);
     // if full, signal send and copy buffer
     if (count_isr % 4 == 0)
     {
@@ -371,9 +396,6 @@ void compute_sample(void)
       PT_SEM_SIGNAL(pt, &new_udp_send_s);
     }
 
-    printf("receving");
-    short currentShort = ((short *)(recv_data))[5];
-    printf("%hd", currentShort);
 
     short valid_game = ((short *)(recv_data))[0];
     ball_x = int2fix15((int)(((short *)(recv_data))[1]));
@@ -1109,6 +1131,58 @@ static PT_THREAD(protothread_score(struct pt *pt))
   }
   PT_END(pt);
 }
+
+
+// This timer ISR is called on core 0
+bool repeating_timer_callback_core_0(struct repeating_timer *t) {
+
+    if (STATE_0 == 0) {
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0  ;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048 ;
+
+        // Ramp up amplitude
+        if (count_0 < ATTACK_TIME) {
+            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
+        }
+        // Ramp down amplitude
+        else if (count_0 > BEEP_DURATION - DECAY_TIME) {
+            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
+        }
+
+        // Mask with DAC control bits
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
+
+        // SPI write (no spinlock b/c of SPI buffer)
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
+
+        // Increment the counter
+        count_0 += 1 ;
+
+        // State transition?
+        if (count_0 == BEEP_DURATION) {
+        	printf("state transition");
+            STATE_0 = 1 ;
+            count_0 = 0 ;
+        }
+    }
+
+    // State transition?
+    else {
+        count_0 += 1 ;
+        if (count_0 == BEEP_REPEAT_INTERVAL) {
+            current_amplitude_0 = 0 ;
+            STATE_0 = 0 ;
+            count_0 = 0 ;
+        }
+    }
+
+    // retrieve core number of execution
+    corenum_0 = get_core_num() ;
+
+    return true;
+}
 // ========================================
 // === core 1 main -- started in main below
 // ========================================
@@ -1151,6 +1225,25 @@ int main()
   gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
   gpio_set_function(PIN_CS, GPIO_FUNC_SPI);
 
+    // set up increments for calculating bow envelope
+    attack_inc = divfix(max_amplitude, int2fix15(ATTACK_TIME)) ;
+    decay_inc =  divfix(max_amplitude, int2fix15(DECAY_TIME)) ;
+
+    // Build the sine lookup table
+    // scaled to produce values between 0 and 4096 (for 12-bit DAC)
+    int ii;
+    for (ii = 0; ii < sine_table_size; ii++){
+         sin_table[ii] = float2fix15(2047*sin((float)ii*6.283/(float)sine_table_size));
+    }
+
+    // Create a repeating timer that calls 
+    // repeating_timer_callback (defaults core 0)
+    struct repeating_timer timer_core_0;
+
+    // Negative delay so means we will call repeating_timer_callback, and call it
+    // again 25us (40kHz) later regardless of how long the callback took to execute
+    add_repeating_timer_us(-25, 
+        repeating_timer_callback_core_0, NULL, &timer_core_0);
   // Initialize VGA
   initVGA();
 
@@ -1174,12 +1267,12 @@ int main()
   // turn pulldown on
   gpio_set_pulls(mode_sel, false, true);
 
-  int i;
-  for (i = 0; i < sin_table_len; i++)
-  {
-    // sine table is in 12 bit range
-    sine_table[i] = (short)(2040 * sin(2 * 3.1416 * (float)i / sin_table_len) + 2048);
-  }
+  // int i;
+  // for (i = 0; i < sin_table_len; i++)
+  // {
+  //   // sine table is in 12 bit range
+  //   sine_table[i] = (short)(2040 * sin(2 * 3.1416 * (float)i / sin_table_len) + 2048);
+  // }
 
   // =======================
   // choose station vs access point
@@ -1299,7 +1392,6 @@ int main()
   // printf("Starting threads\n") ;
   pt_add_thread(protothread_udp_recv);
   pt_add_thread(protothread_udp_send);
-  pt_add_thread(protothread_serial);
   pt_add_thread(protothread_paddle1);
   pt_add_thread(protothread_ball1);
   pt_add_thread(protothread_score);
