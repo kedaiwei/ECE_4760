@@ -134,10 +134,12 @@ fix15 filtered_ay;
 #define VGA_RIGHT 640
 #define BALL_RADIUS 5
 
+fix15 BALL_V_MAG = float2fix15(0.08);
+
 fix15 ball_x = int2fix15(320);
 fix15 ball_y = int2fix15(240);
-fix15 ball_vx = float2fix15(0.1);
-fix15 ball_vy = float2fix15(0.3);
+fix15 ball_vx = float2fix15(0.025);
+fix15 ball_vy = float2fix15(0.075);
 
 fix15 old_ball_x = int2fix15(320);
 fix15 old_ball_y = int2fix15(240);
@@ -148,7 +150,7 @@ fix15 paddle2_y = int2fix15(240);
 fix15 paddle2_vy = float2fix15(0.5);
 int player1 = 0;
 int player2 = 0;
-bool play_game = true;
+bool play_game = false;
 
 //++++++++++++++++++++++++
 // WIRELESS SETUP:
@@ -264,6 +266,7 @@ uint16_t DAC_data_0 ; // output value
 #define BEEP_REPEAT_INTERVAL    40000
 // State machine variables
 volatile unsigned int STATE_0 = 0 ;
+volatile unsigned int LAST_STATE_0;
 volatile unsigned int count_0 = 0 ;
 // DDS sine table (populated in main())
 #define sine_table_size 256
@@ -287,7 +290,7 @@ float Fout;
 // 1 Mbit/sec
 // 50000 works 800 Kbits/sec
 #define Fs 40000 // per second
-volatile int alarm_period = 10000;
+volatile int alarm_period = 5000;
 volatile unsigned int main_inc = 400 * 4294967296 / Fs; // 2^32
 volatile unsigned int main_accum;
 // send uses this to save in buffer, recv uses it for DAC
@@ -366,8 +369,10 @@ void compute_sample(void)
     data_buffer[4] = (short)(player1);
     data_buffer[5] = (short)(player2);
     data_buffer[6] = (short)(play_game);
+    data_buffer[7] = (short)(STATE_0);
+    data_buffer[8] = (short)(phase_incr_main_0);
     // if full, signal send and copy buffer
-    if (count_isr % 4 == 0)
+    if (count_isr % 2 == 0)
     {
       memcpy(send_data, data_buffer, send_data_size);
       tx_buffer_index = 0;
@@ -388,7 +393,7 @@ void compute_sample(void)
     data_buffer[0] = (short)(fix2int15(paddle2_y));
     //printf("%hd", data_buffer[0]);
     // if full, signal send and copy buffer
-    if (count_isr % 4 == 0)
+    if (count_isr % 2 == 0)
     {
       memcpy(send_data, data_buffer, send_data_size);
       tx_buffer_index = 0;
@@ -404,6 +409,11 @@ void compute_sample(void)
     player1 = (int)(((short *)(recv_data))[4]);
     player2 = (int)(((short *)(recv_data))[5]);
     play_game = (bool)(((short *)(recv_data))[6]);
+    short temp_state = (((short *)(recv_data))[7]);
+    phase_incr_main_0= (((short *)(recv_data))[7]);
+    if(temp_state == 0){
+      STATE_0 = 0;
+    }
   }
 } // isr sample routine
 
@@ -798,6 +808,7 @@ static PT_THREAD(protothread_serial(struct pt *pt))
     {
       packet_length = data;
       play = true;
+      play_game = true;
       tx_buffer_index = 0;
       rx_buffer_index = 0;
       if (mode == send)
@@ -840,7 +851,6 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
   while (true)
   {
     // wait for 0.1 sec
-    PT_YIELD_usec(10);
     if (play_game)
     {
       if (mode == send)
@@ -873,15 +883,15 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
         }
 
         // Changing y position of paddle 1
-        paddle1_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
+        paddle1_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.025));
 
-        if (paddle1_vy > float2fix15(0.9))
+        if (paddle1_vy > float2fix15(1.2))
         {
-          paddle1_vy = float2fix15(0.9);
+          paddle1_vy = float2fix15(1.2);
         }
-        if (paddle1_vy < float2fix15(-0.9))
+        if (paddle1_vy < float2fix15(-1.2))
         {
-          paddle1_vy = float2fix15(-0.9);
+          paddle1_vy = float2fix15(-1.2);
         }
 
         // erase paddle
@@ -902,6 +912,7 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
 
         // draw paddle
         fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
+        PT_YIELD_usec(5);
       }
       else
       {
@@ -911,7 +922,10 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
 
         // draw paddle
         fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
+        PT_YIELD_usec(40);
       }
+    }else{
+      PT_YIELD_usec(10);
     }
   }
   PT_END(pt);
@@ -925,7 +939,6 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
 
   while (true)
   {
-    PT_YIELD_usec(10);
     if (play_game)
     {
       if (mode == echo)
@@ -958,15 +971,15 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
         }
 
         // Changing y position of paddle 1
-        paddle2_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
+        paddle2_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.025));
 
-        if (paddle2_vy > float2fix15(0.9))
+        if (paddle2_vy > float2fix15(1.2))
         {
-          paddle2_vy = float2fix15(0.9);
+          paddle2_vy = float2fix15(1.2);
         }
-        if (paddle2_vy < float2fix15(-0.9))
+        if (paddle2_vy < float2fix15(-1.2))
         {
-          paddle2_vy = float2fix15(-0.9);
+          paddle2_vy = float2fix15(-1.2);
         }
 
         // erase paddle
@@ -987,6 +1000,7 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
 
         // draw paddle
         fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+        PT_YIELD_usec(5);
       }
       else
       {
@@ -996,7 +1010,10 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
 
         // draw paddle
         fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+        PT_YIELD_usec(40);
       }
+    }else{
+      PT_YIELD_usec(10);
     }
   }
 
@@ -1024,6 +1041,9 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
         {
           // erase ball
           fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+                      phase_incr_main_0 = (250.0*two32)/Fs;
+            STATE_0 = 0;
+          
           ball_x = int2fix15(VGA_RIGHT / 2);
           ball_y = int2fix15(VGA_BOTTOM / 2);
           ball_vx = 0 - ball_vx;
@@ -1033,6 +1053,8 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
         {
           // erase ball
           fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+                      phase_incr_main_0 = (250.0*two32)/Fs;
+            STATE_0 = 0;
           ball_x = int2fix15(VGA_RIGHT / 2);
           ball_y = int2fix15(VGA_BOTTOM / 2);
           ball_vx = 0 - ball_vx;
@@ -1047,8 +1069,12 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
         if (ball_x > int2fix15(PADDLE1_X + 12) && ball_x < int2fix15(PADDLE1_X + 18))
         {
           if (ball_y > paddle1_y && ball_y < paddle1_y + int2fix15(PADDLE_LENGTH))
-          {
-            ball_vx = float2fix15(0.1);
+          { 
+            ball_vy = float2fix15((fix2int15(paddle1_y) + PADDLE_LENGTH/2 - fix2int15(ball_y))/-250.0);
+            ball_vx = float2fix15(sqrt(fix2float15(multfix15(BALL_V_MAG, BALL_V_MAG) - multfix15(ball_vy, ball_vy))));
+            phase_incr_main_0 = (400.0*two32)/Fs;
+            STATE_0 = 0;
+
           }
         }
 
@@ -1056,7 +1082,10 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
         {
           if (ball_y > paddle2_y && ball_y < paddle2_y + int2fix15(PADDLE_LENGTH))
           {
-            ball_vx = float2fix15(-0.1);
+            ball_vy = float2fix15((fix2int15(paddle2_y) + PADDLE_LENGTH/2 - fix2int15(ball_y))/-250.0);
+            ball_vx = float2fix15(-sqrt(fix2float15(multfix15(BALL_V_MAG, BALL_V_MAG) - multfix15(ball_vy, ball_vy))));
+            phase_incr_main_0 = (400.0*two32)/Fs;
+            STATE_0 = 0;
           }
         }
         // erase ball
@@ -1170,12 +1199,13 @@ bool repeating_timer_callback_core_0(struct repeating_timer *t) {
 
     // State transition?
     else {
-        count_0 += 1 ;
-        if (count_0 == BEEP_REPEAT_INTERVAL) {
-            current_amplitude_0 = 0 ;
-            STATE_0 = 0 ;
-            count_0 = 0 ;
-        }
+      count_0 = 0;
+        // count_0 += 1 ;
+        // if (count_0 == BEEP_REPEAT_INTERVAL) {
+        //     current_amplitude_0 = 0 ;
+        //     STATE_0 = 0 ;
+        //     count_0 = 0 ;
+        // }
     }
 
     // retrieve core number of execution
@@ -1197,7 +1227,9 @@ void core1_main()
   // put slow threads on core 1
   pt_add_thread(protothread_toggle_cyw43);
   pt_add_thread(protothread_serial);
+  pt_add_thread(protothread_paddle1);
   pt_add_thread(protothread_paddle2);
+
   //
   pt_schedule_start;
 
@@ -1392,9 +1424,9 @@ int main()
   // printf("Starting threads\n") ;
   pt_add_thread(protothread_udp_recv);
   pt_add_thread(protothread_udp_send);
-  pt_add_thread(protothread_paddle1);
   pt_add_thread(protothread_ball1);
   pt_add_thread(protothread_score);
+
   //
   // === initalize the scheduler ===============
   pt_schedule_start;
