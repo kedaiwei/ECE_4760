@@ -134,10 +134,15 @@ fix15 filtered_ay;
 #define VGA_RIGHT 640
 #define BALL_RADIUS 5
 
+fix15 BALL_V_MAG = float2fix15(0.09);
+
 fix15 ball_x = int2fix15(320);
 fix15 ball_y = int2fix15(240);
-fix15 ball_vx = float2fix15(0.1);
-fix15 ball_vy = float2fix15(0.3);
+fix15 ball_vx = float2fix15(0.025);
+fix15 ball_vy = float2fix15(0.075);
+
+fix15 old_ball_x = int2fix15(320);
+fix15 old_ball_y = int2fix15(240);
 
 fix15 paddle1_y = int2fix15(240);
 fix15 paddle1_vy = 0;
@@ -145,7 +150,8 @@ fix15 paddle2_y = int2fix15(240);
 fix15 paddle2_vy = float2fix15(0.5);
 int player1 = 0;
 int player2 = 0;
-bool play_game = true;
+bool play_game = false;
+static int begin_time;
 
 //++++++++++++++++++++++++
 // WIRELESS SETUP:
@@ -206,7 +212,7 @@ int play = false;
 int paired = false;
 // data to send over WIFI
 #define max_data_size 512
-int data_size = 500; // 512
+int data_size = 20; // 512
 // double buffer the sent data to avoid skips
 short data_buffer[max_data_size];
 // buffer_number is 0 or 1
@@ -233,13 +239,43 @@ uint64_t time1;
 #define DAC_config_chan_A 0b0011000000000000
 // B-channel, 1x, active
 #define DAC_config_chan_B 0b1011000000000000
-uint16_t DAC_data;
+
+//Direct Digital Synthesis (DDS) parameters
+#define two32 4294967296.0  // 2^32 (a constant)
+#define Fs 40000            // sample rate
+// the DDS units - core 0
+// Phase accumulator and phase increment. Increment sets output frequency.
+volatile unsigned int phase_accum_main_0;
+volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
+volatile unsigned int phase_incr_main_1 = (200.0*two32)/Fs ;
+// Amplitude modulation parameters and variables
+fix15 max_amplitude = int2fix15(1) ;    // maximum amplitude
+fix15 attack_inc ;                      // rate at which sound ramps up
+fix15 decay_inc ;                       // rate at which sound ramps down
+fix15 current_amplitude_0 = 0 ;         // current amplitude (modified in ISR)
+fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
+// Two variables to store core number
+volatile int corenum_0  ;
+
+// Global counter for spinlock experimenting
+volatile int global_counter = 0 ;
+int DAC_output_0 ;
+uint16_t DAC_data_0 ; // output value
+#define ATTACK_TIME             200
+#define DECAY_TIME              200
+#define SUSTAIN_TIME            10000
+#define BEEP_DURATION           10400
+#define BEEP_REPEAT_INTERVAL    40000
+// State machine variables
+volatile unsigned int STATE_0 = 0 ;
+volatile unsigned int LAST_STATE_0;
+volatile unsigned int count_0 = 0 ;
+// DDS sine table (populated in main())
+#define sine_table_size 256
+fix15 sin_table[sine_table_size] ;
 
 // ================================================
 // DDS variables
-#define sin_table_len 256
-short sine_table[sin_table_len];
-short sine_table_out;
 // the desired frequency output
 float Fout;
 // 1/Fs in microseconds for ISR
@@ -256,7 +292,7 @@ float Fout;
 // 1 Mbit/sec
 // 50000 works 800 Kbits/sec
 #define Fs 40000 // per second
-volatile int alarm_period = 1000000;
+volatile int alarm_period = 5000;
 volatile unsigned int main_inc = 400 * 4294967296 / Fs; // 2^32
 volatile unsigned int main_accum;
 // send uses this to save in buffer, recv uses it for DAC
@@ -320,7 +356,6 @@ void compute_sample(void)
   count_isr++;
   if ((mode == send) && play)
   {
-    printf("sending");
     short valid_game = 1;
     // short ball_xx = (short)(fix2int15(ball_x));
     // short ball_yy = (short)(fix2int15(ball_y));
@@ -336,10 +371,9 @@ void compute_sample(void)
     data_buffer[4] = (short)(player1);
     data_buffer[5] = (short)(player2);
     data_buffer[6] = (short)(play_game);
-
-    printf("%hd", count_isr);
+    data_buffer[7] = (short)(STATE_0);
     // if full, signal send and copy buffer
-    if (true)
+    if (count_isr % 2 == 0)
     {
       memcpy(send_data, data_buffer, send_data_size);
       tx_buffer_index = 0;
@@ -347,21 +381,20 @@ void compute_sample(void)
       PT_SEM_SIGNAL(pt, &new_udp_send_s);
     }
 
-    printf("receving");
-    short currentShort = ((short *)(recv_data))[7];
+    //printf("receving");
+    short currentShort = ((short *)(recv_data))[0];
     paddle2_y = int2fix15((int)(currentShort));
-    printf("%hd", currentShort);
-
+    //printf("%hd", currentShort);
     paddle2_y = int2fix15((int)(currentShort));
   }
 
   else if ((mode == echo) && play)
   {
-    printf("sending");
-    data_buffer[7] = (short)(fix2int15(paddle2_y));
-    printf("%hd", (count_isr + 200));
+    //printf("sending");
+    data_buffer[0] = (short)(fix2int15(paddle2_y));
+    //printf("%hd", data_buffer[0]);
     // if full, signal send and copy buffer
-    if (true)
+    if (count_isr % 2 == 0)
     {
       memcpy(send_data, data_buffer, send_data_size);
       tx_buffer_index = 0;
@@ -369,17 +402,16 @@ void compute_sample(void)
       PT_SEM_SIGNAL(pt, &new_udp_send_s);
     }
 
-    printf("receving");
-    short currentShort = ((short *)(recv_data))[5];
-    printf("%hd", currentShort);
 
     short valid_game = ((short *)(recv_data))[0];
-    ball_x = int2fix15(((int *)(recv_data))[1]);
-    ball_y = int2fix15(((int *)(recv_data))[2]);
-    paddle1_y = int2fix15(((int *)(recv_data))[3]);
-    player1 = ((int *)(recv_data))[4];
-    player2 = ((int *)(recv_data))[5];
+    ball_x = int2fix15((int)(((short *)(recv_data))[1]));
+    ball_y = int2fix15((int)(((short *)(recv_data))[2]));
+    paddle1_y = int2fix15((int)(((short *)(recv_data))[3]));
+    player1 = (int)(((short *)(recv_data))[4]);
+    player2 = (int)(((short *)(recv_data))[5]);
     play_game = (bool)(((short *)(recv_data))[6]);
+    STATE_0 = (int)(((short *)(recv_data))[7]);
+
   }
 } // isr sample routine
 
@@ -774,6 +806,7 @@ static PT_THREAD(protothread_serial(struct pt *pt))
     {
       packet_length = data;
       play = true;
+      play_game = true;
       tx_buffer_index = 0;
       rx_buffer_index = 0;
       if (mode == send)
@@ -816,7 +849,6 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
   while (true)
   {
     // wait for 0.1 sec
-    PT_YIELD_usec(10);
     if (play_game)
     {
       if (mode == send)
@@ -849,15 +881,15 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
         }
 
         // Changing y position of paddle 1
-        paddle1_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
+        paddle1_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.025));
 
-        if (paddle1_vy > float2fix15(0.9))
+        if (paddle1_vy > float2fix15(1.2))
         {
-          paddle1_vy = float2fix15(0.9);
+          paddle1_vy = float2fix15(1.2);
         }
-        if (paddle1_vy < float2fix15(-0.9))
+        if (paddle1_vy < float2fix15(-1.2))
         {
-          paddle1_vy = float2fix15(-0.9);
+          paddle1_vy = float2fix15(-1.2);
         }
 
         // erase paddle
@@ -878,15 +910,20 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
 
         // draw paddle
         fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
+        PT_YIELD_usec(5);
       }
       else
       {
         // erase paddle
-        fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE1_X, fix2int15(paddle1_y)-PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE1_X, fix2int15(paddle1_y)+PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
 
         // draw paddle
         fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
+        PT_YIELD_usec(40);
       }
+    }else{
+      PT_YIELD_usec(10);
     }
   }
   PT_END(pt);
@@ -900,7 +937,6 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
 
   while (true)
   {
-    PT_YIELD_usec(10);
     if (play_game)
     {
       if (mode == echo)
@@ -933,15 +969,15 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
         }
 
         // Changing y position of paddle 1
-        paddle2_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.005));
+        paddle2_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.025));
 
-        if (paddle2_vy > float2fix15(0.9))
+        if (paddle2_vy > float2fix15(1.2))
         {
-          paddle2_vy = float2fix15(0.9);
+          paddle2_vy = float2fix15(1.2);
         }
-        if (paddle2_vy < float2fix15(-0.9))
+        if (paddle2_vy < float2fix15(-1.2))
         {
-          paddle2_vy = float2fix15(-0.9);
+          paddle2_vy = float2fix15(-1.2);
         }
 
         // erase paddle
@@ -962,15 +998,20 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
 
         // draw paddle
         fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+        PT_YIELD_usec(5);
       }
       else
       {
         // erase paddle
-        fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE2_X, fix2int15(paddle2_y)-PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE2_X, fix2int15(paddle2_y)+PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
 
         // draw paddle
         fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
+        PT_YIELD_usec(40);
       }
+    }else{
+      PT_YIELD_usec(10);
     }
   }
 
@@ -983,6 +1024,7 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
 {
   // Indicate start of thread
   PT_BEGIN(pt);
+
 
   while (1)
   {
@@ -997,31 +1039,60 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
         {
           // erase ball
           fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+            STATE_0 = 1;
+          
           ball_x = int2fix15(VGA_RIGHT / 2);
           ball_y = int2fix15(VGA_BOTTOM / 2);
           ball_vx = 0 - ball_vx;
           player1 += 1;
-        }
+          // play_game = false;
+          // begin_time = time_us_32();
+          // fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
+          // while (time_us_32()-begin_time < 1000000){
+          //   play_game = false;
+          // }
+          // play_game = true;
+        } 
         if (ball_x <= 0)
         {
           // erase ball
           fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+            STATE_0 = 1;
           ball_x = int2fix15(VGA_RIGHT / 2);
           ball_y = int2fix15(VGA_BOTTOM / 2);
           ball_vx = 0 - ball_vx;
           player2 += 1;
+
+          // PT_YIELD_usec(100);
+          // play_game = false;
+          // begin_time = time_us_32();
+          // fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
+          // while (time_us_32()-begin_time < 1000000){
+          //   play_game = false;
+          // }
+          // play_game = true;
         }
 
         if (ball_y >= int2fix15(VGA_BOTTOM) || ball_y <= 0)
         {
           ball_vy = 0 - ball_vy;
+          STATE_0 = 0;
         }
 
         if (ball_x > int2fix15(PADDLE1_X + 12) && ball_x < int2fix15(PADDLE1_X + 18))
         {
           if (ball_y > paddle1_y && ball_y < paddle1_y + int2fix15(PADDLE_LENGTH))
-          {
-            ball_vx = float2fix15(0.1);
+          { 
+            ball_vy = float2fix15((fix2int15(paddle1_y) + PADDLE_LENGTH / 2 - fix2float15(ball_y)) / -300);
+            if (ball_vy >= float2fix15(0.078)){
+              ball_vy = float2fix15(0.078);
+            }
+            if (ball_vy <= float2fix15(-0.078)){
+              ball_vy = float2fix15(-0.078);
+            }
+            ball_vx = float2fix15(sqrt(fix2float15(multfix15(BALL_V_MAG, BALL_V_MAG) - multfix15(ball_vy, ball_vy))));
+            STATE_0 = 0;
+
           }
         }
 
@@ -1029,7 +1100,15 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
         {
           if (ball_y > paddle2_y && ball_y < paddle2_y + int2fix15(PADDLE_LENGTH))
           {
-            ball_vx = float2fix15(-0.1);
+            ball_vy = float2fix15((fix2int15(paddle2_y) + PADDLE_LENGTH / 2 - fix2float15(ball_y)) / -300);
+            if (ball_vy >= float2fix15(0.078)){
+              ball_vy = float2fix15(0.078);
+            }
+            if (ball_vy <= float2fix15(-0.078)){
+              ball_vy = float2fix15(-0.078);
+            }
+            ball_vx = float2fix15(-sqrt(fix2float15(multfix15(BALL_V_MAG, BALL_V_MAG) - multfix15(ball_vy, ball_vy))));
+            STATE_0 = 0;
           }
         }
         // erase ball
@@ -1043,12 +1122,16 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
       }
       else
       {
-        // erase ball
-        fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
+        if(old_ball_x != ball_x || old_ball_y != ball_y){
+          fillCircle(fix2int15(old_ball_x), fix2int15(old_ball_y), BALL_RADIUS, BLACK);
+          //fillCircle(fix2int15(old_ball_x) + 20, fix2int15(old_ball_y) + 20, BALL_RADIUS, RED);
+          old_ball_y = ball_y;
+          old_ball_x = ball_x;
+        }
+        fillCircle(fix2int15(old_ball_x), fix2int15(old_ball_y), BALL_RADIUS, WHITE);
 
-        // draw ball
-        fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
       }
+      
     }
   }
 
@@ -1073,7 +1156,7 @@ static PT_THREAD(protothread_score(struct pt *pt))
     setTextColor2(WHITE, BLACK);
     writeString(str);
 
-    if (player1 == 10)
+    if (player1 == 20)
     {
       setCursor(200, 240);
       sprintf(str, "Player 1 wins!");
@@ -1083,7 +1166,7 @@ static PT_THREAD(protothread_score(struct pt *pt))
       play_game = false;
     }
 
-    if (player2 == 10)
+    if (player2 == 20)
     {
       setCursor(200, 240);
       sprintf(str, "Player 2 wins!");
@@ -1095,6 +1178,89 @@ static PT_THREAD(protothread_score(struct pt *pt))
     PT_YIELD_usec(100000);
   }
   PT_END(pt);
+}
+
+
+// This timer ISR is called on core 0
+bool repeating_timer_callback_core_0(struct repeating_timer *t) {
+
+    if (STATE_0 == 0) {
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0  ;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048 ;
+
+        // Ramp up amplitude
+        if (count_0 < ATTACK_TIME) {
+            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
+        }
+        // Ramp down amplitude
+        else if (count_0 > BEEP_DURATION - DECAY_TIME) {
+            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
+        }
+
+        // Mask with DAC control bits
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
+
+        // SPI write (no spinlock b/c of SPI buffer)
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
+
+        // Increment the counter
+        count_0 += 1 ;
+
+        // State transition?
+        if (count_0 == BEEP_DURATION) {
+        	printf("state transition");
+            STATE_0 = 2 ;
+            count_0 = 0 ;
+        }
+    }else if (STATE_0 == 1) {
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_1  ;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048 ;
+
+        // Ramp up amplitude
+        if (count_0 < ATTACK_TIME) {
+            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
+        }
+        // Ramp down amplitude
+        else if (count_0 > BEEP_DURATION - DECAY_TIME) {
+            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
+        }
+
+        // Mask with DAC control bits
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
+
+        // SPI write (no spinlock b/c of SPI buffer)
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
+
+        // Increment the counter
+        count_0 += 1 ;
+
+        // State transition?
+        if (count_0 == BEEP_DURATION) {
+        	printf("state transition");
+            STATE_0 = 2 ;
+            count_0 = 0 ;
+        }
+    }
+
+    // State transition?
+    else {
+      count_0 = 0;
+        // count_0 += 1 ;
+        // if (count_0 == BEEP_REPEAT_INTERVAL) {
+        //     current_amplitude_0 = 0 ;
+        //     STATE_0 = 0 ;
+        //     count_0 = 0 ;
+        // }
+    }
+
+    // retrieve core number of execution
+    corenum_0 = get_core_num() ;
+
+    return true;
 }
 // ========================================
 // === core 1 main -- started in main below
@@ -1110,7 +1276,9 @@ void core1_main()
   // put slow threads on core 1
   pt_add_thread(protothread_toggle_cyw43);
   pt_add_thread(protothread_serial);
+  pt_add_thread(protothread_paddle1);
   pt_add_thread(protothread_paddle2);
+
   //
   pt_schedule_start;
 
@@ -1138,6 +1306,25 @@ int main()
   gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
   gpio_set_function(PIN_CS, GPIO_FUNC_SPI);
 
+    // set up increments for calculating bow envelope
+    attack_inc = divfix(max_amplitude, int2fix15(ATTACK_TIME)) ;
+    decay_inc =  divfix(max_amplitude, int2fix15(DECAY_TIME)) ;
+
+    // Build the sine lookup table
+    // scaled to produce values between 0 and 4096 (for 12-bit DAC)
+    int ii;
+    for (ii = 0; ii < sine_table_size; ii++){
+         sin_table[ii] = float2fix15(2047*sin((float)ii*6.283/(float)sine_table_size));
+    }
+
+    // Create a repeating timer that calls 
+    // repeating_timer_callback (defaults core 0)
+    struct repeating_timer timer_core_0;
+
+    // Negative delay so means we will call repeating_timer_callback, and call it
+    // again 25us (40kHz) later regardless of how long the callback took to execute
+    add_repeating_timer_us(-25, 
+        repeating_timer_callback_core_0, NULL, &timer_core_0);
   // Initialize VGA
   initVGA();
 
@@ -1161,12 +1348,12 @@ int main()
   // turn pulldown on
   gpio_set_pulls(mode_sel, false, true);
 
-  int i;
-  for (i = 0; i < sin_table_len; i++)
-  {
-    // sine table is in 12 bit range
-    sine_table[i] = (short)(2040 * sin(2 * 3.1416 * (float)i / sin_table_len) + 2048);
-  }
+  // int i;
+  // for (i = 0; i < sin_table_len; i++)
+  // {
+  //   // sine table is in 12 bit range
+  //   sine_table[i] = (short)(2040 * sin(2 * 3.1416 * (float)i / sin_table_len) + 2048);
+  // }
 
   // =======================
   // choose station vs access point
@@ -1286,10 +1473,9 @@ int main()
   // printf("Starting threads\n") ;
   pt_add_thread(protothread_udp_recv);
   pt_add_thread(protothread_udp_send);
-  pt_add_thread(protothread_serial);
-  pt_add_thread(protothread_paddle1);
   pt_add_thread(protothread_ball1);
   pt_add_thread(protothread_score);
+
   //
   // === initalize the scheduler ===============
   pt_schedule_start;
