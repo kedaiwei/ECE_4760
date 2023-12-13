@@ -105,17 +105,6 @@
 //++++++++++++++++++++++++
 fix15 acceleration[3], gyro[3];
 
-// character array
-char screentext[40];
-
-// draw speed
-int threshold = 10;
-
-// Some macros for max/min/abs
-#define min(a, b) ((a < b) ? a : b)
-#define max(a, b) ((a < b) ? b : a)
-#define abs(a) ((a > 0) ? a : -a)
-
 #define PI 3.14159265
 
 // IMU angle estimation
@@ -202,7 +191,7 @@ int blink_time, remote_blink_time;
 // signal threads for sned/recv data
 struct pt_sem new_udp_recv_s, new_udp_send_s;
 // mode: send/echo
-// send mode is in chage here, defined by seril input
+// send mode is in charge here, defined by seril input
 // both units default to echo
 #define echo 0
 #define send 1
@@ -240,39 +229,39 @@ uint64_t time1;
 // B-channel, 1x, active
 #define DAC_config_chan_B 0b1011000000000000
 
-//Direct Digital Synthesis (DDS) parameters
-#define two32 4294967296.0  // 2^32 (a constant)
-#define Fs 40000            // sample rate
+// Direct Digital Synthesis (DDS) parameters
+#define two32 4294967296.0 // 2^32 (a constant)
+#define Fs 40000           // sample rate
 // the DDS units - core 0
 // Phase accumulator and phase increment. Increment sets output frequency.
 volatile unsigned int phase_accum_main_0;
-volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
-volatile unsigned int phase_incr_main_1 = (200.0*two32)/Fs ;
+volatile unsigned int phase_incr_main_0 = (400.0 * two32) / Fs;
+volatile unsigned int phase_incr_main_1 = (200.0 * two32) / Fs;
 // Amplitude modulation parameters and variables
-fix15 max_amplitude = int2fix15(1) ;    // maximum amplitude
-fix15 attack_inc ;                      // rate at which sound ramps up
-fix15 decay_inc ;                       // rate at which sound ramps down
-fix15 current_amplitude_0 = 0 ;         // current amplitude (modified in ISR)
-fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
+fix15 max_amplitude = int2fix15(1); // maximum amplitude
+fix15 attack_inc;                   // rate at which sound ramps up
+fix15 decay_inc;                    // rate at which sound ramps down
+fix15 current_amplitude_0 = 0;      // current amplitude (modified in ISR)
+fix15 current_amplitude_1 = 0;      // current amplitude (modified in ISR)
 // Two variables to store core number
-volatile int corenum_0  ;
+volatile int corenum_0;
 
 // Global counter for spinlock experimenting
-volatile int global_counter = 0 ;
-int DAC_output_0 ;
-uint16_t DAC_data_0 ; // output value
-#define ATTACK_TIME             200
-#define DECAY_TIME              200
-#define SUSTAIN_TIME            10000
-#define BEEP_DURATION           10400
-#define BEEP_REPEAT_INTERVAL    40000
+volatile int global_counter = 0;
+int DAC_output_0;
+uint16_t DAC_data_0; // output value
+#define ATTACK_TIME 200
+#define DECAY_TIME 200
+#define SUSTAIN_TIME 10000
+#define BEEP_DURATION 10400
+#define BEEP_REPEAT_INTERVAL 40000
 // State machine variables
-volatile unsigned int STATE_0 = 0 ;
+volatile unsigned int STATE_0 = 0;
 volatile unsigned int LAST_STATE_0;
-volatile unsigned int count_0 = 0 ;
+volatile unsigned int count_0 = 0;
 // DDS sine table (populated in main())
 #define sine_table_size 256
-fix15 sin_table[sine_table_size] ;
+fix15 sin_table[sine_table_size];
 
 // ================================================
 // DDS variables
@@ -357,13 +346,7 @@ void compute_sample(void)
   if ((mode == send) && play)
   {
     short valid_game = 1;
-    // short ball_xx = (short)(fix2int15(ball_x));
-    // short ball_yy = (short)(fix2int15(ball_y));
-    // short player1_xx = (short)(fix2int15(ball_x));
-    // short player1_yy = (short)(fix2int15(ball_y));
-    // short player1_score = (short)(player1);
-    // short player2_score = (short)(player2);
-
+    // populate with player 1 data
     data_buffer[0] = valid_game;
     data_buffer[1] = (short)(fix2int15(ball_x));
     data_buffer[2] = (short)(fix2int15(ball_y));
@@ -381,19 +364,17 @@ void compute_sample(void)
       PT_SEM_SIGNAL(pt, &new_udp_send_s);
     }
 
-    //printf("receving");
+    // populate variables from player 2
     short currentShort = ((short *)(recv_data))[0];
     paddle2_y = int2fix15((int)(currentShort));
-    //printf("%hd", currentShort);
     paddle2_y = int2fix15((int)(currentShort));
   }
 
   else if ((mode == echo) && play)
   {
-    //printf("sending");
+    // populate with player 2 data
     data_buffer[0] = (short)(fix2int15(paddle2_y));
-    //printf("%hd", data_buffer[0]);
-    // if full, signal send and copy buffer
+    //  if full, signal send and copy buffer
     if (count_isr % 2 == 0)
     {
       memcpy(send_data, data_buffer, send_data_size);
@@ -402,7 +383,7 @@ void compute_sample(void)
       PT_SEM_SIGNAL(pt, &new_udp_send_s);
     }
 
-
+    // set variables to player 1 data
     short valid_game = ((short *)(recv_data))[0];
     ball_x = int2fix15((int)(((short *)(recv_data))[1]));
     ball_y = int2fix15((int)(((short *)(recv_data))[2]));
@@ -411,7 +392,6 @@ void compute_sample(void)
     player2 = (int)(((short *)(recv_data))[5]);
     play_game = (bool)(((short *)(recv_data))[6]);
     STATE_0 = (int)(((short *)(recv_data))[7]);
-
   }
 } // isr sample routine
 
@@ -552,7 +532,7 @@ static PT_THREAD(protothread_udp_send(struct pt *pt))
     char *req = (char *)p->payload;
     memset(req, 0, udp_send_length + 1); //
     memcpy(req, send_data, udp_send_length);
-    //
+
     // cyw43_arch_lwip_begin();
     err_t er = udp_sendto(pcb, p, &addr, UDP_PORT); // port
     // cyw43_arch_lwip_end();
@@ -564,7 +544,6 @@ static PT_THREAD(protothread_udp_send(struct pt *pt))
     }
     else
     {
-      // printf("Sent packet %d\n", counter);
       counter++;
     }
   }
@@ -579,9 +558,6 @@ static PT_THREAD(protothread_udp_recv(struct pt *pt))
   PT_BEGIN(pt);
   static char arg1[32], arg2[32], arg3[32], arg4[32];
   static char *token;
-
-  // data structure for interval timer
-  // PT_INTERVAL_INIT() ;
 
   while (1)
   {
@@ -605,7 +581,6 @@ static PT_THREAD(protothread_udp_recv(struct pt *pt))
         // if I'm the echo unit, grab the address of the other pico
         // for the send thread to use
         strcpy(udp_target_pico, arg2);
-        //
         paired = true;
         // then send back echo-unit address to send-pico
         memset(send_data, 0, UDP_MSG_LEN_MAX);
@@ -623,7 +598,7 @@ static PT_THREAD(protothread_udp_recv(struct pt *pt))
         // if I'm the send unit, then just save for future transmit
         strcpy(udp_target_pico, arg2);
       }
-    } // end  if(strcmp(arg1,"IP")==0)
+    } // end
 
     // is it ack packet ?
     else if ((strcmp(arg1, "ack") == 0) && !play)
@@ -643,7 +618,6 @@ static PT_THREAD(protothread_udp_recv(struct pt *pt))
         PT_YIELD(pt);
       }
     }
-
     // NEVER exit while
   } // END WHILE(1)
   PT_END(pt);
@@ -659,7 +633,7 @@ static PT_THREAD(protothread_toggle_cyw43(struct pt *pt))
 {
   PT_BEGIN(pt);
   static bool LED_state = false;
-  //
+
   // data structure for interval timer
   PT_INTERVAL_INIT();
   // set some default blink time
@@ -672,7 +646,7 @@ static PT_THREAD(protothread_toggle_cyw43(struct pt *pt))
     // force a context switch of there is data to send
     if (&new_udp_send_s.count)
       PT_YIELD(pt);
-    //
+
     LED_state = !LED_state;
 
     cyw43_arch_lwip_begin();
@@ -681,7 +655,6 @@ static PT_THREAD(protothread_toggle_cyw43(struct pt *pt))
     cyw43_arch_lwip_end();
     // blink time is modifed by the udp recv thread
     PT_YIELD_INTERVAL(blink_time * 1000);
-    //
     // NEVER exit while
   } // END WHILE(1)
   PT_END(pt);
@@ -695,7 +668,7 @@ static PT_THREAD(protothread_serial(struct pt *pt))
   PT_BEGIN(pt);
   static char cmd[16], arg1[16], arg2[16];
   static char *token;
-  //
+
   if (mode == send)
     printf("Type 'help' for commands\n\r");
 
@@ -727,26 +700,15 @@ static PT_THREAD(protothread_serial(struct pt *pt))
     strcpy(arg1, token);
     token = strtok(NULL, "  ");
     strcpy(arg2, token);
-    // token = strtok(NULL, "  ");
-    // strcpy(arg3, token) ;
-    // token = strtok(NULL, "  ");
-    // strcpy(arg4, token) ;
-    // token = strtok(NULL, "  ");
-    // strcpy(arg5, token) ;
-    // token = strtok(NULL, "  ");
-    // strcpy(arg6, token) ;
 
     // parse by command
     if (strcmp(cmd, "help") == 0)
     {
       // commands
-      // printf("set mode [send, recv]\n\r");
       printf("play frequency\n\r");
       printf("stop \n\r");
       printf("pair \n\r");
       printf("ack \n\r");
-      // printf("data array_size \n\r");
-      //
       //  need start data and end data commands
     }
 
@@ -843,12 +805,16 @@ typedef struct TCP_SERVER_T_
   async_context_t *context;
 } TCP_SERVER_T;
 
+// =================================================
+//
+//    GAME PLAY THREADS
+//
+// =================================================
 static PT_THREAD(protothread_paddle1(struct pt *pt))
 {
   PT_BEGIN(pt);
   while (true)
   {
-    // wait for 0.1 sec
     if (play_game)
     {
       if (mode == send)
@@ -870,7 +836,7 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
         complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
         filtered_complementary = filtered_complementary + ((complementary_angle - filtered_complementary) >> 4);
 
-        // When the arm swings past 0 degrees, set it to zero
+        // Cap arm angle
         if (filtered_complementary > int2fix15(180))
         {
           filtered_complementary = int2fix15(180);
@@ -880,9 +846,9 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
           filtered_complementary = 0;
         }
 
-        // Changing y position of paddle 1
+        // Changing y velocity of paddle 1
         paddle1_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.025));
-
+        // Cap y velocity
         if (paddle1_vy > float2fix15(1.2))
         {
           paddle1_vy = float2fix15(1.2);
@@ -894,7 +860,7 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
 
         // erase paddle
         fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, BLACK);
-
+        // Cap paddle position
         if (paddle1_y + paddle1_vy <= 0)
         {
           paddle1_y = 0;
@@ -912,17 +878,19 @@ static PT_THREAD(protothread_paddle1(struct pt *pt))
         fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
         PT_YIELD_usec(5);
       }
-      else
+      else // player 2
       {
         // erase paddle
-        fillRect(PADDLE1_X, fix2int15(paddle1_y)-PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
-        fillRect(PADDLE1_X, fix2int15(paddle1_y)+PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE1_X, fix2int15(paddle1_y) - PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE1_X, fix2int15(paddle1_y) + PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
 
         // draw paddle
         fillRect(PADDLE1_X, fix2int15(paddle1_y), 10, PADDLE_LENGTH, WHITE);
         PT_YIELD_usec(40);
       }
-    }else{
+    }
+    else
+    {
       PT_YIELD_usec(10);
     }
   }
@@ -958,7 +926,7 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
         complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
         filtered_complementary = filtered_complementary + ((complementary_angle - filtered_complementary) >> 4);
 
-        // When the arm swings past 0 degrees, set it to zero
+        // Cap arm angle
         if (filtered_complementary > int2fix15(180))
         {
           filtered_complementary = int2fix15(180);
@@ -968,9 +936,9 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
           filtered_complementary = 0;
         }
 
-        // Changing y position of paddle 1
+        // Changing y velocity of paddle 2
         paddle2_vy = 0 - multfix15((filtered_complementary - int2fix15(90)), float2fix15(0.025));
-
+        // Cap y velocity
         if (paddle2_vy > float2fix15(1.2))
         {
           paddle2_vy = float2fix15(1.2);
@@ -982,7 +950,7 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
 
         // erase paddle
         fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, BLACK);
-
+        // Cap paddle position
         if (paddle2_y + paddle2_vy <= 0)
         {
           paddle2_y = 0;
@@ -1003,14 +971,16 @@ static PT_THREAD(protothread_paddle2(struct pt *pt))
       else
       {
         // erase paddle
-        fillRect(PADDLE2_X, fix2int15(paddle2_y)-PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
-        fillRect(PADDLE2_X, fix2int15(paddle2_y)+PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE2_X, fix2int15(paddle2_y) - PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
+        fillRect(PADDLE2_X, fix2int15(paddle2_y) + PADDLE_LENGTH, 10, PADDLE_LENGTH, BLACK);
 
         // draw paddle
         fillRect(PADDLE2_X, fix2int15(paddle2_y), 10, PADDLE_LENGTH, WHITE);
         PT_YIELD_usec(40);
       }
-    }else{
+    }
+    else
+    {
       PT_YIELD_usec(10);
     }
   }
@@ -1025,74 +995,62 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
   // Indicate start of thread
   PT_BEGIN(pt);
 
-
   while (1)
   {
-    // wait for 0.1 sec
+    // wait for 0.000001 sec
     PT_YIELD_usec(10);
     if (play_game)
     {
       if (mode == send)
       {
         // Changing position of ball
+        // If hit left or right walls
         if (ball_x >= int2fix15(VGA_RIGHT))
         {
           // erase ball
           fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
-            STATE_0 = 1;
-          
+          STATE_0 = 1;
+
           ball_x = int2fix15(VGA_RIGHT / 2);
           ball_y = int2fix15(VGA_BOTTOM / 2);
           ball_vx = 0 - ball_vx;
           player1 += 1;
-          // play_game = false;
-          // begin_time = time_us_32();
-          // fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
-          // while (time_us_32()-begin_time < 1000000){
-          //   play_game = false;
-          // }
-          // play_game = true;
-        } 
+        }
         if (ball_x <= 0)
         {
           // erase ball
           fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, BLACK);
-            STATE_0 = 1;
+          STATE_0 = 1;
           ball_x = int2fix15(VGA_RIGHT / 2);
           ball_y = int2fix15(VGA_BOTTOM / 2);
           ball_vx = 0 - ball_vx;
           player2 += 1;
-
-          // PT_YIELD_usec(100);
-          // play_game = false;
-          // begin_time = time_us_32();
-          // fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
-          // while (time_us_32()-begin_time < 1000000){
-          //   play_game = false;
-          // }
-          // play_game = true;
         }
 
+        // If hit top or bottom walls
         if (ball_y >= int2fix15(VGA_BOTTOM) || ball_y <= 0)
         {
           ball_vy = 0 - ball_vy;
           STATE_0 = 0;
         }
 
+        // If hit paddles change angle w/ respect to position of paddles
         if (ball_x > int2fix15(PADDLE1_X + 12) && ball_x < int2fix15(PADDLE1_X + 18))
         {
           if (ball_y > paddle1_y && ball_y < paddle1_y + int2fix15(PADDLE_LENGTH))
-          { 
+          {
             ball_vy = float2fix15((fix2int15(paddle1_y) + PADDLE_LENGTH / 2 - fix2float15(ball_y)) / -300);
-            if (ball_vy >= float2fix15(0.078)){
+            // Cap ball speed
+            if (ball_vy >= float2fix15(0.078))
+            {
               ball_vy = float2fix15(0.078);
             }
-            if (ball_vy <= float2fix15(-0.078)){
+            if (ball_vy <= float2fix15(-0.078))
+            {
               ball_vy = float2fix15(-0.078);
             }
             ball_vx = float2fix15(sqrt(fix2float15(multfix15(BALL_V_MAG, BALL_V_MAG) - multfix15(ball_vy, ball_vy))));
             STATE_0 = 0;
-
           }
         }
 
@@ -1101,10 +1059,12 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
           if (ball_y > paddle2_y && ball_y < paddle2_y + int2fix15(PADDLE_LENGTH))
           {
             ball_vy = float2fix15((fix2int15(paddle2_y) + PADDLE_LENGTH / 2 - fix2float15(ball_y)) / -300);
-            if (ball_vy >= float2fix15(0.078)){
+            if (ball_vy >= float2fix15(0.078))
+            {
               ball_vy = float2fix15(0.078);
             }
-            if (ball_vy <= float2fix15(-0.078)){
+            if (ball_vy <= float2fix15(-0.078))
+            {
               ball_vy = float2fix15(-0.078);
             }
             ball_vx = float2fix15(-sqrt(fix2float15(multfix15(BALL_V_MAG, BALL_V_MAG) - multfix15(ball_vy, ball_vy))));
@@ -1120,18 +1080,18 @@ static PT_THREAD(protothread_ball1(struct pt *pt))
         // draw ball
         fillCircle(fix2int15(ball_x), fix2int15(ball_y), BALL_RADIUS, WHITE);
       }
-      else
+      else // player 2
       {
-        if(old_ball_x != ball_x || old_ball_y != ball_y){
+        if (old_ball_x != ball_x || old_ball_y != ball_y)
+        {
+          // erase ball
           fillCircle(fix2int15(old_ball_x), fix2int15(old_ball_y), BALL_RADIUS, BLACK);
-          //fillCircle(fix2int15(old_ball_x) + 20, fix2int15(old_ball_y) + 20, BALL_RADIUS, RED);
           old_ball_y = ball_y;
           old_ball_x = ball_x;
         }
+        // draw ball
         fillCircle(fix2int15(old_ball_x), fix2int15(old_ball_y), BALL_RADIUS, WHITE);
-
       }
-      
     }
   }
 
@@ -1156,6 +1116,7 @@ static PT_THREAD(protothread_score(struct pt *pt))
     setTextColor2(WHITE, BLACK);
     writeString(str);
 
+    // Game over
     if (player1 == 20)
     {
       setCursor(200, 240);
@@ -1174,124 +1135,129 @@ static PT_THREAD(protothread_score(struct pt *pt))
       writeString(str);
       play_game = false;
     }
-
+    // wait 0.01 sec
     PT_YIELD_usec(100000);
   }
   PT_END(pt);
 }
 
-
 // This timer ISR is called on core 0
-bool repeating_timer_callback_core_0(struct repeating_timer *t) {
+bool repeating_timer_callback_core_0(struct repeating_timer *t)
+{
+  // hit top, bottom, or paddle
+  if (STATE_0 == 0)
+  {
+    // DDS phase and sine table lookup
+    phase_accum_main_0 += phase_incr_main_0;
+    DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+                                       sin_table[phase_accum_main_0 >> 24])) +
+                   2048;
 
-    if (STATE_0 == 0) {
-        // DDS phase and sine table lookup
-        phase_accum_main_0 += phase_incr_main_0  ;
-        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
-            sin_table[phase_accum_main_0>>24])) + 2048 ;
-
-        // Ramp up amplitude
-        if (count_0 < ATTACK_TIME) {
-            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
-        }
-        // Ramp down amplitude
-        else if (count_0 > BEEP_DURATION - DECAY_TIME) {
-            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
-        }
-
-        // Mask with DAC control bits
-        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
-
-        // SPI write (no spinlock b/c of SPI buffer)
-        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
-
-        // Increment the counter
-        count_0 += 1 ;
-
-        // State transition?
-        if (count_0 == BEEP_DURATION) {
-        	printf("state transition");
-            STATE_0 = 2 ;
-            count_0 = 0 ;
-        }
-    }else if (STATE_0 == 1) {
-        // DDS phase and sine table lookup
-        phase_accum_main_0 += phase_incr_main_1  ;
-        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
-            sin_table[phase_accum_main_0>>24])) + 2048 ;
-
-        // Ramp up amplitude
-        if (count_0 < ATTACK_TIME) {
-            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
-        }
-        // Ramp down amplitude
-        else if (count_0 > BEEP_DURATION - DECAY_TIME) {
-            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
-        }
-
-        // Mask with DAC control bits
-        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
-
-        // SPI write (no spinlock b/c of SPI buffer)
-        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
-
-        // Increment the counter
-        count_0 += 1 ;
-
-        // State transition?
-        if (count_0 == BEEP_DURATION) {
-        	printf("state transition");
-            STATE_0 = 2 ;
-            count_0 = 0 ;
-        }
+    // Ramp up amplitude
+    if (count_0 < ATTACK_TIME)
+    {
+      current_amplitude_0 = (current_amplitude_0 + attack_inc);
     }
+    // Ramp down amplitude
+    else if (count_0 > BEEP_DURATION - DECAY_TIME)
+    {
+      current_amplitude_0 = (current_amplitude_0 - decay_inc);
+    }
+
+    // Mask with DAC control bits
+    DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff));
+
+    // SPI write (no spinlock b/c of SPI buffer)
+    spi_write16_blocking(SPI_PORT, &DAC_data_0, 1);
+
+    // Increment the counter
+    count_0 += 1;
 
     // State transition?
-    else {
+    if (count_0 == BEEP_DURATION)
+    {
+      printf("state transition");
+      STATE_0 = 2;
       count_0 = 0;
-        // count_0 += 1 ;
-        // if (count_0 == BEEP_REPEAT_INTERVAL) {
-        //     current_amplitude_0 = 0 ;
-        //     STATE_0 = 0 ;
-        //     count_0 = 0 ;
-        // }
+    }
+  }
+
+  // hit left or right wall
+  else if (STATE_0 == 1)
+  {
+    // DDS phase and sine table lookup
+    phase_accum_main_0 += phase_incr_main_1;
+    DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+                                       sin_table[phase_accum_main_0 >> 24])) +
+                   2048;
+
+    // Ramp up amplitude
+    if (count_0 < ATTACK_TIME)
+    {
+      current_amplitude_0 = (current_amplitude_0 + attack_inc);
+    }
+    // Ramp down amplitude
+    else if (count_0 > BEEP_DURATION - DECAY_TIME)
+    {
+      current_amplitude_0 = (current_amplitude_0 - decay_inc);
     }
 
-    // retrieve core number of execution
-    corenum_0 = get_core_num() ;
+    // Mask with DAC control bits
+    DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff));
 
-    return true;
+    // SPI write (no spinlock b/c of SPI buffer)
+    spi_write16_blocking(SPI_PORT, &DAC_data_0, 1);
+
+    // Increment the counter
+    count_0 += 1;
+
+    // State transition?
+    if (count_0 == BEEP_DURATION)
+    {
+      printf("state transition");
+      STATE_0 = 2;
+      count_0 = 0;
+    }
+  }
+
+  // State transition?
+  else
+  {
+    count_0 = 0;
+  }
+
+  // retrieve core number of execution
+  corenum_0 = get_core_num();
+
+  return true;
 }
 // ========================================
 // === core 1 main -- started in main below
 // ========================================
 void core1_main()
 {
-  //
   //  === add threads  ====================
   // for core 1
   // ISR to handle analog
   alarm_in_us(alarm_period);
-  //
+
   // put slow threads on core 1
   pt_add_thread(protothread_toggle_cyw43);
   pt_add_thread(protothread_serial);
   pt_add_thread(protothread_paddle1);
   pt_add_thread(protothread_paddle2);
 
-  //
   pt_schedule_start;
 
-  //
   // === initalize the scheduler ==========
   // pt_schedule_start ;
   // NEVER exits
   // ======================================
 }
 // ====================================================
+
 int main()
 {
-  // =======================
   // init the serial
   stdio_init_all();
 
@@ -1306,25 +1272,26 @@ int main()
   gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
   gpio_set_function(PIN_CS, GPIO_FUNC_SPI);
 
-    // set up increments for calculating bow envelope
-    attack_inc = divfix(max_amplitude, int2fix15(ATTACK_TIME)) ;
-    decay_inc =  divfix(max_amplitude, int2fix15(DECAY_TIME)) ;
+  // set up increments for calculating bow envelope
+  attack_inc = divfix(max_amplitude, int2fix15(ATTACK_TIME));
+  decay_inc = divfix(max_amplitude, int2fix15(DECAY_TIME));
 
-    // Build the sine lookup table
-    // scaled to produce values between 0 and 4096 (for 12-bit DAC)
-    int ii;
-    for (ii = 0; ii < sine_table_size; ii++){
-         sin_table[ii] = float2fix15(2047*sin((float)ii*6.283/(float)sine_table_size));
-    }
+  // Build the sine lookup table
+  // scaled to produce values between 0 and 4096 (for 12-bit DAC)
+  int ii;
+  for (ii = 0; ii < sine_table_size; ii++)
+  {
+    sin_table[ii] = float2fix15(2047 * sin((float)ii * 6.283 / (float)sine_table_size));
+  }
 
-    // Create a repeating timer that calls 
-    // repeating_timer_callback (defaults core 0)
-    struct repeating_timer timer_core_0;
+  // Create a repeating timer that calls
+  // repeating_timer_callback (defaults core 0)
+  struct repeating_timer timer_core_0;
 
-    // Negative delay so means we will call repeating_timer_callback, and call it
-    // again 25us (40kHz) later regardless of how long the callback took to execute
-    add_repeating_timer_us(-25, 
-        repeating_timer_callback_core_0, NULL, &timer_core_0);
+  // Negative delay so means we will call repeating_timer_callback, and call it
+  // again 25us (40kHz) later regardless of how long the callback took to execute
+  add_repeating_timer_us(-25,
+                         repeating_timer_callback_core_0, NULL, &timer_core_0);
   // Initialize VGA
   initVGA();
 
@@ -1347,13 +1314,6 @@ int main()
   gpio_set_dir(mode_sel, GPIO_IN);
   // turn pulldown on
   gpio_set_pulls(mode_sel, false, true);
-
-  // int i;
-  // for (i = 0; i < sin_table_len; i++)
-  // {
-  //   // sine table is in 12 bit range
-  //   sine_table[i] = (short)(2040 * sin(2 * 3.1416 * (float)i / sin_table_len) + 2048);
-  // }
 
   // =======================
   // choose station vs access point
